@@ -17,11 +17,65 @@ function escapeXml(text) {
 
 export default {
 
-	async fetch(request) {
-		const response = await fetch("https://retrotube.net/api/v1/videos?page=1&limit=15&sort=newest");
+    async fetch(request, env) {
 
-		const data = await response.json();
-		const entries = data.items.map(video => `
+        const path = new URL(request.url).pathname;
+        if (path === "/notifications-test") {
+            const username = env.RETROTUBE_USERNAME?.trim();
+            if (!username) {
+                return new Response('Не задана переменная RETROTUBE_USERNAME.', {
+                    status: 503,
+                    headers: {
+                        'content-type': 'text/plain; charset=utf-8',
+                        'cache-control': 'no-store'
+                    }
+                });
+            }
+            const notificationResponse = await fetch(`https://retrotube.net/api/v1/users/${encodeURIComponent(username)}/notifications?page=1`, {
+                headers: {
+                    Cookie: `refreshToken=${env.RETROTUBE_REFRESH_TOKEN}`
+                }
+            })
+            if (!notificationResponse.ok) {
+                return new Response(
+                    `Ошибка API: ${notificationResponse.status}`,
+                    { status: notificationResponse.status }
+                );
+            }
+            const notifications = await notificationResponse.json();
+            const content = notifications.items.map(notification =>
+
+
+                `<entry>
+                <title>${escapeXml(notification.message || notification.type || 'Уведомление')}</title>
+                
+                <content type="text">${escapeXml(notification.data?.text ?? notification.message ?? '')}</content>
+                <id>urn:retrotube:notification:${notification._id}</id>
+                <updated>${notification.createdAt}</updated>
+                <author>
+                    <name>${escapeXml(notification.caller?.username ?? '—')}</name>
+                </author>
+                </entry>
+            `).join('\n');
+            const notificationAtom = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+    <title>RetroTube Feed — Notifications</title>
+    <id>urn:retrotube:feed:notifications</id>
+    <updated>${notifications.items[0]?.createdAt ?? new Date().toISOString()}</updated>
+
+    ${content}
+</feed>`;
+            return new Response(notificationAtom, {
+                headers: {
+                    'content-type': 'application/atom+xml; charset=utf-8',
+                    'cache-control': 'no-store'
+                }
+            });
+        }
+        const response = await fetch("https://retrotube.net/api/v1/videos?page=1&limit=15&sort=newest");
+
+        const data = await response.json();
+        const entries = data.items.map(video => `
 
 			<entry>
 			<title>${escapeXml(video.title)}</title>
@@ -36,7 +90,7 @@ export default {
 			
 		` ).join("\n")
 
-		const atom = `<?xml version="1.0" encoding="UTF-8"?>
+        const atom = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
     <title>RetroTube Feed — Latest</title>
     <id>urn:retrotube:feed:latest</id>
@@ -44,10 +98,10 @@ export default {
 
     ${entries}
 </feed>`;
-return new Response(atom, {
-    headers: {
-        'content-type': 'application/atom+xml; charset=utf-8'
+        return new Response(atom, {
+            headers: {
+                'content-type': 'application/atom+xml; charset=utf-8'
+            }
+        });
     }
-});
-	}
 };
